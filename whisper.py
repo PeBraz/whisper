@@ -205,36 +205,17 @@ class ScopeFunction:
 	def set_body(self, body):
 		self.body = body
 
-	def add_function(self, params, ret):
-		"""
-			Checks if there is already a function with the corresponding values, else it is generated
-		"""
-		new_type = ScopeFunction.FunctionType(params, ret)
-		for fn in self.functions:
-			if new_type == fn:
-				return fn.name
-
-		new_type.set_name("{}_{}".format(self.scope.fullname, self.this_counter))
-		self.this_counter += 1
-		self.functions.append(new_type)
-		return new_type.name
-
 	def create(self):
 		if not self.body:
 			raise Exception("The scope function '{}' has no body!!".format(self.name))
 
-		# The body is shared, so it must be reattributed
-		self.body.scope = self.scope
-
 		fn_template = "{} {} ({}) {{{};}}"
-
 		args = ["{} {}".format(var.ctype, var.identifier) for var in self.scope.params.values()]
-		#args = ["{} {}".format(param_type, self.args.items()[param_index][0].split(".")[-1]) \
-		#		for param_index, param_type in enumerate(self.scope.params)]
 		body = "{}\n{} {}".format(self.scope.scope_struct.init_all_var(),\
 			"return" if self.scope.ret != ctypes.VOID else "",\
 		 self.body.compile(call=True) if self.body.callable else self.body.compile())
-		
+
+		self.scope.protos.append("{} {} ({});".format(self.scope.ret, self.scope.call_name,','.join(args)))
 		return fn_template.format(self.scope.ret, self.scope.call_name, ','.join(args), body)
 
 class Scope:
@@ -257,7 +238,6 @@ class Scope:
 		#self.cfunctions = []
 		self.scope_function = ScopeFunction(self)
 		self.scope_struct = ScopeStruct(self)
-
 		self.other_scopes = []
 
 		self.params = None
@@ -267,11 +247,14 @@ class Scope:
 		self.fn_counter = 0
 		self.scope_counter = 0
 		self.functions = scope.functions if scope else [] 
+		self.protos = scope.protos if scope else []
 
 		self.fn_name_template = "__fn_{scope}_{id}"
 		self.fn_template = "{type} {name}(){{{body};}}"
 
 		self.scopes = OrderedDict() # Child Scopes
+
+		self.in_compilation_scope = None
 
 	def add_scope(self, scope):
 		"""
@@ -321,7 +304,8 @@ class Scope:
 
 			@returns  	the name of the corresponding C function that can be called
 		"""
-		name = self.fn_name_template.format( scope=self.fullname,id=self.fn_counter)
+		name = self.fn_name_template.format(scope=self.fullname,id=self.fn_counter)
+		self.protos.append("{} {}();".format(type, name))
 		self.fn_counter += 1;
 		template = self.fn_template.format(type=type, name=name,body=body)
 		self.functions.append(template)
@@ -333,16 +317,19 @@ class Scope:
 		"""
 		return  (ctypes.NONE in self.params) or (self.ret == ctypes.NONE) 
 
-
 	def compile_functions(self):
-		#if self.name != 'main':
-			#self.functions.append(self.scope_function.create())
-
-		for scope in self.other_scopes:
-			self.functions.append(scope.scope_function.create())
-
 		for scope in self.scopes.itervalues():
 			scope.compile_functions()
+
+		
+		for scope in self.other_scopes:
+			# NOTE: at scope creation, the list from father to children is shared, but not from scope to other_scopes
+			
+			prev_comp_scope = self.in_compilation_scope
+			self.in_compilation_scope = scope
+			self.functions.append(scope.scope_function.create())
+			self.in_compilation_scope = prev_comp_scope
+			#self.functions.extend(scope.functions)
 
 		return '\n'.join(self.functions)
 
@@ -382,8 +369,8 @@ class Scope:
 			structs.append(scope.scope_struct.create())# scope.compile_variables()
 
 		for scope in self.scopes.values():
-			print 
 			structs.append(scope.compile_variables())
+
 		return '\n'.join(structs)
 
 
@@ -393,15 +380,15 @@ class Scope:
 		"""
 
 		for scope in self.other_scopes:
-
-			if scope.ret == ret and scope.params.keys() == params.keys():
-				return scope.call_name
+			if scope.ret == ret and  all(a.ctype == b.ctype for a,b in zip(scope.params.values(), params.values())):
+				return scope
 
 		# create a new scope
 		new_name = "{}_{}".format(self.name, self.scope_counter)
 		self.scope_counter += 1
 
-		new_scope = Scope(name=new_name, scope=None)
+		new_scope = Scope(name=new_name, scope=self.father)
+		new_scope.in_compilation_scope = self
 		new_scope.call_name = new_name	
 
 		new_scope.scope_struct.args = OrderedDict() 
@@ -412,20 +399,20 @@ class Scope:
 			param = params.get(var.name)
 
 			this_type = param.ctype if param else var.ctype
-			#this_value = param.value if param else var.value
-			size= len(param.value) - 1 if param else 0
+			size = len(param.value) - 1 if param else 0
 			new_scope.scope_struct.args[new_name] = ScopeVariable(new_name, this_type, var.value, size=size)
-
 
 
 		new_scope.scope_function.args = OrderedDict(self.scope_function.args)
 		new_scope.scope_function.set_body(self.scope_function.body)
+		new_scope.protos = self.protos
 
 
 		new_scope.ret = ret
 		new_scope.params = params
+
 		self.other_scopes.append(new_scope)
-		return new_scope.name
+		return new_scope
 
 	def call(self, parameters):
 		"""
@@ -443,6 +430,8 @@ class Scope:
 
 			fn_types[local_name] = ScopeVariable(local_name, p.type(), value=p.compile()) 
 
+
+		
 		# Now all function parameters are confirmed
 
 		# temporarily make types in the functions be the same to the function  (instead of ctypes.NONE)
@@ -454,19 +443,16 @@ class Scope:
 		for var in fn_types.values():
 			tmp_scope_struct[var.name] = var
 
+
 		self.scope_struct.args = tmp_scope_struct
-		self.scope_function.body.compile()
 
-		# get the new function's type
 		ret = self.scope_function.body.type()
-
 		self.scope_struct.args = struct
 		return self.new_type_scope(fn_types, ret)
 
-		#return self.scope_function.add_function(fn_types, ret)
-
-
 	def type(self):
+		if self.ret == None:
+			raise Exception("Function type is unknown, compile it first")
 		return self.ret
 
 class Parser:
@@ -575,6 +561,8 @@ class Argument:
 		main = 	("#include <stdio.h>\n"
 				 "#include <string.h>\n"
 				 "#include \"lisp_def.c\"\n\n"
+				 "//prototype definitions\n"
+				 "{{}}\n\n"
 				 "//variable definitions\n"
 				 "{{}}\n\n"
 				 "//function definitions\n"
@@ -593,7 +581,12 @@ class Argument:
 		#else:
 	#		main_code = main.format(self.all_args[0].compile())
 
-		main_code = main_code.format(self.scope.compile_variables(),self.scope.compile_functions())
+
+		fns = self.scope.compile_functions()
+
+		main_code = main_code.format('\n'.join(self.scope.protos),
+										self.scope.compile_variables(),
+										fns)
 		return main_code
 
 	def getArgumentClass(self, id_str):
@@ -700,7 +693,8 @@ class VarArgument(Argument):
 		self.callable = False
 
 	def compile(self):
-		return "__{}.{}".format(self.scope.name, str(self.arg))
+		scope = self.scope.in_compilation_scope or self.scope 
+		return "__{}.{}".format(scope.name, str(self.arg))
 
 	def execute(self):
 		return self.scope[self.arg]
@@ -709,10 +703,8 @@ class VarArgument(Argument):
 		self.scope[self.arg] = val 
 
 	def type(self):
-		#print self.scope.scope_struct.args[self.compile()].ctype -> type
-		#print self.scope.scope_function.args[self.compile()] -> none
-		#print self.scope.get_variable(self.compile()).ctype ->type
-		return self.scope.get_variable(self.compile()).ctype
+		scope = self.scope.in_compilation_scope or self.scope
+		return scope.get_variable(self.compile()).ctype
 
 
 class IntegerArgument(Argument):
@@ -748,6 +740,7 @@ class SeqArgument(Argument):
 	def __init__(self,*args, **kwargs):
 		Argument.__init__(self, *args, **kwargs)
 		self.callable = True
+
 	def execute(self):
 		args = [arg.execute() for arg in self.all_args]
 		return args[-1]
@@ -756,12 +749,12 @@ class SeqArgument(Argument):
 		def mapfn(arg):
 			return (arg.compile(call=True) if arg.callable else arg.compile()) + ";"
 
-		seq_calls = map(mapfn, self.all_args)
 
+		seq_calls = map(mapfn, self.all_args)
 		if  self.all_args[-1].type() != ctypes.VOID:
 			seq_calls[-1] = "return {}".format(seq_calls[-1])
 
-		fn_call = self.scope.new_function('\n'.join(seq_calls))
+		fn_call = self.scope.new_function('\n'.join(seq_calls), type=self.type())
 		return "{}()".format(fn_call) if call else fn_call 
 
 
@@ -850,8 +843,11 @@ class PrintArgument(Argument):
 	def compile(self, call=False):
 
 		type_formatters = []
+
+		print_args = [arg.compile() for arg in self.all_args]
+
 		for arg in self.all_args:
-	
+
 			if arg.type() == ctypes.STRING:
 				type_formatters.append("%s")
 			else:
@@ -860,10 +856,9 @@ class PrintArgument(Argument):
 
 
 		prints = "printf(\"{}\\n\",{});".format(" ".join(type_formatters),\
-		  ", ".join(arg.compile() for arg in self.all_args))
+		  ", ".join(print_args))
 
 		fn_call = self.scope.new_function(prints)
-
 		return "{}()".format(fn_call) if call else fn_call 
 
 	def type(self):
@@ -1056,7 +1051,7 @@ class DefArgument(Argument):
 		function = self.all_args[2]
 		
 		call_name =\
-		 self.scope.new_scope_function(function)#body.compile(call=True) if body.callable else body.compile(),body.type()) 
+		 self.scope.new_scope_function(function)
 
 	
 	def compile(self):
@@ -1074,11 +1069,14 @@ class FunctionCallArgument(Argument):
 		Argument.__init__(self, *args, **kwargs)
 	def compile(self):
 		fn_scope = self.scope.get_scope(self.fn_name)
-		fn = fn_scope.call(self.all_args)
-		return "{}({})\n".format(fn, ','.join(arg.compile() for arg in self.all_args))
+
+		self.scope = fn_scope.call(self.all_args)
+		return "{}({})\n".format(self.scope.name, ','.join(arg.compile() for arg in self.all_args))
 
 	def type(self):
-		return self.scope.type()
+		fn_scope = self.scope.get_scope(self.fn_name)
+		scope = fn_scope.call(self.all_args)
+		return scope.type()
 
 
 if __name__ == '__main__':
