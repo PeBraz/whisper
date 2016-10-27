@@ -44,7 +44,7 @@ class ScopeVariable:
 		@optional 	value 	the value used for the variable initialization, 
 							if None given, use ctype specific initialization value
 	"""
-	def __init__(self, name, ctype, value=None):
+	def __init__(self, name, ctype, value=None, size=0):
 		self.name = name
 		self.identifier = name.split('.')[-1]
 		self.ctype = ctype
@@ -58,7 +58,10 @@ class ScopeVariable:
 		else:
 			raise Exception("Don't know what to assign as initial value to the type received")
 
-		self.size = len(value) if value and ctype == ctypes.STRING  else 0
+		if size:
+			self.size = size
+		else:
+			self.size = len(value) - 1 if value and ctype == ctypes.STRING  else 0
 
 	def clone(self):
 		return ScopeVariable(self.name, self.ctype, value=self.value)
@@ -225,8 +228,9 @@ class ScopeFunction:
 
 		fn_template = "{} {} ({}) {{{};}}"
 
-		args = ["{} {}".format(param_type, self.args.items()[param_index][0].split(".")[-1]) \
-				for param_index, param_type in enumerate(self.scope.params)]
+		args = ["{} {}".format(var.ctype, var.identifier) for var in self.scope.params.values()]
+		#args = ["{} {}".format(param_type, self.args.items()[param_index][0].split(".")[-1]) \
+		#		for param_index, param_type in enumerate(self.scope.params)]
 		body = "{}\n{} {}".format(self.scope.scope_struct.init_all_var(),\
 			"return" if self.scope.ret != ctypes.VOID else "",\
 		 self.body.compile(call=True) if self.body.callable else self.body.compile())
@@ -387,21 +391,10 @@ class Scope:
 		"""
 			Creates a new scope for specific type parameters / return value combos
 		"""
-		
-		# First check if the current scope can be used to create the functions scope
-		"""
-		if not self.params: 
-			self.ret = ret
-			self.params = params
-			self.call_name = "{}_{}".format(self.fullname, self.scope_counter)
-			self.scope_counter += 1
-			return self.call_name
-		"""
-
 
 		for scope in self.other_scopes:
-			# scope already exists for this type
-			if scope.ret == ret and scope.params == params:
+
+			if scope.ret == ret and scope.params.keys() == params.keys():
 				return scope.call_name
 
 		# create a new scope
@@ -410,19 +403,19 @@ class Scope:
 
 		new_scope = Scope(name=new_name, scope=None)
 		new_scope.call_name = new_name	
-		new_param_types = { name: params[i] for i, name in enumerate(self.scope_function.args)}
-
 
 		new_scope.scope_struct.args = OrderedDict() 
 		# First clean all the names on the new scope
 		for var in self.scope_struct.args.itervalues():
 			new_name = "__{}.{}".format(new_scope.name, var.identifier)
-			new_scope.scope_struct.args[new_name] = ScopeVariable(new_name, var.ctype, value=var.value) 
-	
-			ctype = new_param_types.get(var.name)
 
-			if ctype:
-				new_scope.scope_struct.args[new_name].ctype = ctype
+			param = params.get(var.name)
+
+			this_type = param.ctype if param else var.ctype
+			#this_value = param.value if param else var.value
+			size= len(param.value) - 1 if param else 0
+			new_scope.scope_struct.args[new_name] = ScopeVariable(new_name, this_type, var.value, size=size)
+
 
 
 		new_scope.scope_function.args = OrderedDict(self.scope_function.args)
@@ -440,14 +433,15 @@ class Scope:
 		"""
 
 		local_args = self.scope_function.args.iteritems()
-		fn_types = []
+	
+		fn_types = OrderedDict()
 		for p in parameters:
 			local_name, local_type = local_args.next()
 			# if local has a type, then the type of the parameter must be the same
 			if local_type != ctypes.NONE and local_type != p.type():
 				raise Exception("Expected argument of type '{}' received '{}'".format(local_type, p.type()))
 
-			fn_types.append(p.type()) 
+			fn_types[local_name] = ScopeVariable(local_name, p.type(), value=p.compile()) 
 
 		# Now all function parameters are confirmed
 
@@ -457,11 +451,8 @@ class Scope:
 		## Create a temporary score to perform temporary variable changes for this compilation 
 		tmp_scope_struct = OrderedDict()
 		struct = self.scope_struct.args 
-		for param_index, param_type in enumerate(fn_types):
-			param_name = self.scope_function.args.items()[param_index][0]
-
-			tmp_scope_struct[param_name] = struct[param_name].clone()
-			tmp_scope_struct[param_name].ctype = param_type
+		for var in fn_types.values():
+			tmp_scope_struct[var.name] = var
 
 		self.scope_struct.args = tmp_scope_struct
 		self.scope_function.body.compile()
