@@ -254,7 +254,7 @@ class Scope:
 
 		self.scopes = OrderedDict() # Child Scopes
 
-		self.in_compilation_scope = None
+		self.in_compilation_scope = self
 
 	def add_scope(self, scope):
 		"""
@@ -363,7 +363,7 @@ class Scope:
 		return self.scope_struct.get_variable(name)
 
 	def compile_variables(self):
-		structs = []#self.scope_struct.create()  + "\n"
+		structs = [self.scope_struct.create()] if self.name == "main" else []
 
 		for scope in self.other_scopes:
 			structs.append(scope.scope_struct.create())# scope.compile_variables()
@@ -410,7 +410,6 @@ class Scope:
 
 		new_scope.ret = ret
 		new_scope.params = params
-
 		self.other_scopes.append(new_scope)
 		return new_scope
 
@@ -703,7 +702,7 @@ class VarArgument(Argument):
 		self.scope[self.arg] = val 
 
 	def type(self):
-		scope = self.scope.in_compilation_scope or self.scope
+		scope = self.scope.in_compilation_scope or self.scope 
 		return scope.get_variable(self.compile()).ctype
 
 
@@ -749,8 +748,8 @@ class SeqArgument(Argument):
 		def mapfn(arg):
 			return (arg.compile(call=True) if arg.callable else arg.compile()) + ";"
 
-
 		seq_calls = map(mapfn, self.all_args)
+
 		if  self.all_args[-1].type() != ctypes.VOID:
 			seq_calls[-1] = "return {}".format(seq_calls[-1])
 
@@ -759,6 +758,7 @@ class SeqArgument(Argument):
 
 
 	def type(self):
+		map(lambda arg: arg.type(), self.all_args[:-1])
 		return self.all_args[-1].type()
 
 
@@ -823,12 +823,20 @@ class SetArgument(Argument):
 		self.all_args[0].set(self.all_args[1].execute())
 	
 	def compile(self):
-		return self.scope.new_variable(self.all_args[0].compile(),
+		if not self.scope.in_compilation_scope:
+			raise Exception("No scope being compiled, can't set the scope")
+		return self.scope.in_compilation_scope.new_variable(self.all_args[0].compile(),
 										self.all_args[1].type(),
 										self.all_args[1].compile()) # is this callable??
 
 	def type(self):
-		return ctypes.VOID
+		if not self.scope.in_compilation_scope:
+			raise Exception("No scope being compiled, can't set the scope")
+		self.scope.in_compilation_scope.new_variable(self.all_args[0].compile(),
+										self.all_args[1].type(),
+										None)
+		return self.all_args[1].type()
+		#return ctypes.VOID
 
 
 class PrintArgument(Argument):
@@ -1050,8 +1058,7 @@ class DefArgument(Argument):
 
 		function = self.all_args[2]
 		
-		call_name =\
-		 self.scope.new_scope_function(function)
+		self.scope.new_scope_function(function)
 
 	
 	def compile(self):
