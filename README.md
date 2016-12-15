@@ -25,3 +25,4 @@ Code examples can be see inside the `test/` folder, the `test/output/` folder ha
  - [ ] Add personal error checking to whisper.
  - [ ] Stricter compile checking.
  - [ ] Add hyfen syntax to variable and function names (C doesn't allow it).
+ - [ ] Add lists 
