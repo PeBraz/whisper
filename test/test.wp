@@ -26,8 +26,53 @@
     )
 )
 
+(def sum_up_to_n_2 (n) 
+    (seq
+        (set current 1)
+        (set result 0)
+        (while (le current n)
+            (seq
+                (set result  
+                    (if (or 
+                            (eq (mod current 3) 0)
+                            (eq (mod current 5) 0)
+                        )
+                        (add result current) 
+                        result)
+                )
+                (set current (add current 1))
+            )
+        )
+        result
+    )
+)
+
+(def multiplication_table () 
+    (seq
+        (set i 0)
+        (set current 0)
+        (while (le i 12)
+            (seq
+                (while (le current 10)
+                    (seq
+                        (print current "x" i ": " (mul current i)) 
+                        (set current (add current 1))
+                    )
+                )
+                (set current 0)
+                (set i (add i 1))
+            )
+        )
+        0
+    )
+)
+
+
+
 
 ;(print_hello_world)
 ;(hello_name "Alexandro")
-(print (sum_up_to_n 2))
+;(print (sum_up_to_n 5))
+;(print (sum_up_to_n_2 5))
+(multiplication_table)
 
