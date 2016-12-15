@@ -1,0 +1,33 @@
+;
+; Simple programming problems taken from:
+;      https://adriann.github.io/programming_problems.html
+;
+
+
+(def print_hello_world () 
+    (print "Hello World!")
+)
+
+(def hello_name (name) 
+    (print name)
+)
+
+(def sum_up_to_n (n)
+    (seq
+        (set current 1)
+        (set result 0)
+        (while (le current n)
+            (seq
+                (set result (add current result))
+                (set current (add current 1))
+            )
+        )
+        result
+    )
+)
+
+
+;(print_hello_world)
+;(hello_name "Alexandro")
+(print (sum_up_to_n 2))
+
