@@ -19,6 +19,8 @@ class ScopeVariable:
 			self.value = ""
 		elif ctype == ctypes.INT:
 			self.value = 0
+		elif ctype == ctypes.NONE:
+			return 						#This is a parameter for which I don't know the type yet
 		else:
 			raise Exception("Don't know what to assign as initial value to the type received\n"
 				" variable {{\n"
@@ -45,7 +47,7 @@ class ScopeStruct:
 
 	def add_variable(self, variable):
 		"""
-			Add a variable unique to this scope, the type is important for the declaring/initializing it
+			Add a variable unique to this scope, the type is important for declaring/initializing it
 		"""
 		arg = self.args.get(variable.name)
 		if arg:
@@ -294,15 +296,28 @@ class Scope:
 
 		return '\n'.join(self.functions)
 
+	def new_parameter(self, parameter_name):
+		self.scope_struct.add_variable(ScopeVariable(parameter_name, ctypes.NONE))
+		self.scope_function.add_arg(parameter_name, ctypes.NONE)
+
 	def new_variable(self, var_name, var_type, var):
 		"""
 			Creates a new variable for this scope (and children) only
+
+			@var_name	the name of the variable to be create
+			@var_type 	(optional) the type of the variable  
+			@var 		(optional) the value of the variable
+		"""
+
 		"""
 		# for local variables, for which the type is not known
 		if not var_type: 
+			print "WTFDAFGWFG"
+			#print var_name, "->",var
 			self.scope_struct.add_variable(ScopeVariable(var_name, ctypes.NONE, value=var))
 			self.scope_function.add_arg(var_name, ctypes.NONE)
 			return 
+		"""
 
 		# for redeclarations of values
 		old = self.scope_struct.get_variable(var_name)

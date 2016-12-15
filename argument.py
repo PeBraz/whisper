@@ -561,8 +561,8 @@ class DefArgument(Argument):
 
 		for var in self.all_args[1]: # function variables, these have ctype.None
 		 	# add the arguments in order, they can only be declared after their types are known
-			self.scope.new_variable(VarArgument(var, scope=self.scope).compile(), None, var)
-
+			#self.scope.new_variable(VarArgument(var, scope=self.scope).compile(), None, None)
+			self.scope.new_parameter(VarArgument(var, scope=self.scope).compile())
 		function = self.all_args[2]
 		
 		self.scope.new_scope_function(function)
