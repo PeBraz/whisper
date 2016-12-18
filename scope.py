@@ -1,78 +1,138 @@
 from collections import OrderedDict
 
-from wptypes import ctypes
+from wp.types import ctypes
+
 
 class ScopeVariable:
-    
 	"""
-		@optional 	value 	the value used for the variable initialization, 
-							if None given, use ctype specific initialization value
+		Creates a variable inside a ScopeVariable
+		
+		- the 'mutalbe' property defines it that variable can be changed (to have different types)
+			- if has type ctypes.NONE then it is 'mutable' and can be changed
+
+		@name 		the name of the variable in the scope 
+		@ctype 		(optional) the type of the scope
+		@value 		(optional) the value used for the variable initialization, 
+					if None given, use ctype specific initialization value
 	"""
-	def __init__(self, name, ctype, value=None, size=0):
+
+	@staticmethod
+	def create(name, ctype=ctypes.NONE, value=None):
+		if ctype == ctypes.STRING:
+			return StringVariable(name, value=value)
+		elif ctype == ctypes.INT:
+			return PrimitiveVariable(name, ctype=ctype, value=value)
+		else:
+			return NoneVariable(name)
+
+	def init(self, scope_name):
+		pass
+	def declare(self):
+		pass
+	def clone(self):
+		pass
+
+class NoneVariable(ScopeVariable):
+	def __init__(self, name):
 		self.name = name
-		self.identifier = name.split('.')[-1]
+		self.ctype = ctypes.NONE
+
+	def init(self):
+		raise Exception("Tried to initialize a value with no type")
+	def declare(self):
+		raise Exception("Tried to declare a value with no type")
+	def clone(self):
+		return NoneVariable(self.name)
+
+class PrimitiveVariable(ScopeVariable):
+	def __init__(self, name, ctype=None, value=None):
+		if not ctype:
+			raise Exception("Tried to initialize a primitive variable {} with no type.".format(name))
+		self.name = name
+		self.value = value if value else 0
 		self.ctype = ctype
 
-		if value:
-			self.value = value
-		elif ctype == ctypes.STRING:
-			self.value = ""
-		elif ctype == ctypes.INT:
-			self.value = 0
-		elif ctype == ctypes.NONE:
-			return 						#This is a parameter for which I don't know the type yet
-		else:
-			raise Exception("Don't know what to assign as initial value to the type received\n"
-				" variable {{\n"
-				"\twhisper name (identifier): {}\n"
-				"\tc name (name): {}\n}}".format(self.identifier, self.name))
-    
-		if size:
-			self.size = size
-		else:
-			self.size = len(value) - 1 if value and ctype == ctypes.STRING  else 0
+	def init(self, scope_name):
+		return  "{}.{} = {};".format(scope_name, self.name, self.value)
+
+	def declare(self):
+		return "{} {};".format(self.ctype, self.name);
+	def clone(self):
+		return PrimitiveVariable(self.name, ctype=self.ctype, value=self.value)
+
+class StringVariable(ScopeVariable):
+	def __init__(self, name, ctype=None, value=None):
+		self.name = name
+		self._value = value if value else ""
+		self.ctype = ctypes.STRING
+		self.size = len(self._value)
+
+	@property
+	def value(self):
+		return _value
+
+	@value.setter
+	def value(self, value):
+		self.size = max(self.size, len(value))
+		self._value = value
+
+	def init(self, scope_name):
+		return "memcpy({}.{}, {}, {});\n".format(scope_name,self.name, self.value, self.size)
+
+	def declare(self):
+		return "{} {}[{}];".format("char", var.name, var.size)
 
 	def clone(self):
-		return ScopeVariable(self.name, self.ctype, value=self.value)
+		return StringVariable(self.name, self.value)
 
-class ScopeStruct:
+class ObjectVariable(ScopeVariable):
+	pass
+
+
+
+
+class ScopeVariables:
 	"""
-		Defines a C structure where a scope's variables are stored
+		Defines a C structure where a scope's variables are stored.
+		A object of this type takes care of declaring scope variables.
+
+		- add : a variable
+		- get : a variable
+		- init/init_all : C initialization for 1/all variables and parameters
+		- declare/declare_all : C declaration for 1/all variables and parameters
+		- create : C struct declaration for all variables and parameters
 	"""
 	def __init__(self, scope):
 		self.args = OrderedDict() # (name: Variable())
-		self.name = scope.name 
+		self.name = scope.name
+		self.scope = scope
 		self.template = "struct {{{}}} {};"
+		self.parameters = []
 
-
-	def add_variable(self, variable):
+	def add(self, variable, parameter=False):
 		"""
 			Add a variable unique to this scope, the type is important for declaring/initializing it
 		"""
 		arg = self.args.get(variable.name)
-		if arg:
-			self.args[variable.name].ctype = variable.ctype
-		else:
-			self.args[variable.name] = variable
-		"""
-		arg = self.args.get(variable.name)	
-		if (not arg):
-			self.args[variable.name] = variable
-		elif (arg.ctype == ctypes.NONE):
-			self.args[variable.name].ctype = variable.ctype
-		else:
-			raise Exception("Variable is already declared in '{}' context".format(self.name))
-		"""
 
+		## checks if arg reassignment is correct (doesnt check if is one is array and the other is primitive - even if both have the same size)
+		if arg and arg.ctype != ctypes.NONE and arg.ctype != variable.ctype:
+			raise Exception("Variable with name '{}' already exists in this scope, expected {} received {}."
+				.format(arg.name, arg.ctype, variable.ctype))
+		
+		self.args[variable.name] = variable
 
-	def get_variable(self, var_name):
+		if parameter:
+			self.parameters.append(variable.name)
+
+	def get(self, var_name):
 		"""
 			@returns 	ScopeVariable object or None
 		"""
 		return self.args.get(var_name)
 		
 
-	def init_var(self, var_name, value=None):
+	def init(self, var_name, value=None):
 		"""
 			Returns the C value assignement string for the variable with the name given,
 			using its default value initialization (ex: 0 for int) or using the 'value' 
@@ -89,103 +149,86 @@ class ScopeStruct:
 			raise Exception("Variable '{}' not in scope '{}'".format(var_name, self.name))
 
 		var = self.args[var_name]
-
-		set_value = var.value
-
 		if value:
-			if var.ctype == ctypes.STRING:
-				var.size = max(var.size, len(value)) - 1 # remove <""> and add <\0> 
-			set_value = value
+			var.value = value
 
-		if var.ctype == ctypes.NONE:
-			raise Exception("Tried to initialize a value with no type")
-		elif var.ctype == ctypes.STRING:
-			return "memcpy({}, {}, {});\n".format(var.name, set_value, var.size)
-		elif var.ctype == ctypes.INT:
-			return "{} = {};".format(var.name, set_value);
-		else:
-			raise Exception("Who knows?")
+		return var.init(self.scope.name)
+
  
-	def declare_var(self, var_name):
+	def declare(self, var_name):
 		if not self.args.has_key(var_name):
 			raise Exception("Variable '{}' not in scope '{}'".format(var_name, self.name))
 
 		var = self.args[var_name]
-		if var.ctype == ctypes.NONE: # if none type, then its value comes from a local variable
-			raise Exception("Tried to initialize a value with no type")
-		elif var.ctype == ctypes.STRING:
-			return "{} {}[{}];".format("char", var.identifier, var.size)
-		else:
-			return "{} {};".format(var.ctype, var.identifier);
+		
+		return var.declare()
 
+	def init_all(self):
+		return '\n'.join(self.init(var) for var in self.args.keys())
 
-	def init_all_var(self):
-		return '\n'.join(self.init_var(var) for var in self.args)
-
-	def declare_all_var(self):
-
-		return '\n'.join(self.declare_var(var) for var in self.args)
-
+	def declare_all(self):
+		return '\n'.join((self.declare(var) for var in self.args.keys()))
 
 	def create(self):
 		"""
 			Create the structure associated with this scope
 		"""
-		return self.template.format(self.declare_all_var(), "__" + self.name)
+		return self.template.format(self.declare_all(), "__" + self.name)
 
+	def clone(self):
+		## NOTE/TODO: the scope will have a repeated name, need to change it (how? find out)
+		cloned = ScopeVariables(self.scope) # TODO: Do i need the scope? don't i just need a name
+		cloned.parameters = list(self.parameters)
+		for var in self.args.itervalues():
+			cloned.add(var.clone()) 
+		return cloned
+
+	def get_params(self):
+		return map(lambda p: self.args[p], self.parameters)
 
 
 class ScopeFunction:
+	"""
+		-A object of this type takes care of initializing values from a ScopeStruct inside the function body
+		- ...
+	"""
 
-	class FunctionType:
-		def __init__(self, params, ret):
-			self.params = params
-			self.ret = ret
 
-		def set_name(self, name):
-			self.name = name
+	def __init__(self, scope, variables):
+		self.variables = variables
 
-		def __eq__(self, other):
-			"""
-				Two scope functions are equal if they have arguments and return value of equal types 
-			"""
-			return self.ret == other.ret and self.args == other.args
-
-	def __init__(self, scope):
-		self.args = OrderedDict() # (ctype, str)
 		self.name = scope.name
-		self.functions = [] # Stores function types
-		self.body = None
 		self.scope = scope
-		self.this_counter = 0
 
-	def __eq__(self, other):
-		"""
-			Two scope functions are equal if they have arguments and return value of equal types 
-		"""
-		return self.ret == other.ret and self.args == other.args
+		# add myself to the scope
+		self.this_counter = scope.call_counter
+		self.scope.call_counter += 1
 
-	def add_arg(self, name, ctype):
-		# if the arg doesnt exist or is none, update
-		arg = self.args.get(name)	
-		if (not arg) or (arg == ctypes.NONE):
-			self.args[name] = ctype
+	def name(self):
+		return "{}_{}".format(self.name, self.this_counter)
 
-	def set_body(self, body):
-		self.body = body
+	def get(self, var_name):
+		return self.variables.get(var_name)
 
-	def create(self):
-		if not self.body:
-			raise Exception("The scope function '{}' has no body!!".format(self.name))
+	def create(self, body):
+		if not body:
+			raise Exception("The scope '{}' has no body!!".format(self.name))
 
 		fn_template = "{} {} ({}) {{{};}}"
-		args = ["{} {}".format(var.ctype, var.identifier) for var in self.scope.params.values()]
-		body = "{}\n{} {}".format(self.scope.scope_struct.init_all_var(),\
-			"return" if self.scope.ret != ctypes.VOID else "",\
-		 self.body.compile(call=True) if self.body.callable else self.body.compile())
 
-		self.scope.protos.append("{} {} ({});".format(self.scope.ret, self.scope.call_name,','.join(args)))
-		return fn_template.format(self.scope.ret, self.scope.call_name, ','.join(args), body)
+		compiled = body.compile(call=True) if body.callable else body.compile()
+		ret = body.type()
+
+		args = ["{} {}".format(var.ctype, var.name) for var in self.variables.get_params()]
+		fnbody = "{}\n{} {}".format(self.variables.init_all(),\
+			"return" if ret != ctypes.VOID else "",\
+			compiled)
+
+		self.scope.protos.append("{} {} ({});".format(ret, self.name,','.join(args)))
+		
+		return fn_template.format(ret, self.name, ','.join(args), fnbody)
+
+
 
 class Scope:
 
@@ -202,19 +245,14 @@ class Scope:
 		self.call_name = None
 		self.ctype = ctypes.NONE
 
-		# this scope gets transformed into a function and a struct
-		# more than 1 of each is possible, if one argument can have multiple types
-		#self.cfunctions = []
-		self.scope_function = ScopeFunction(self)
-		self.scope_struct = ScopeStruct(self)
-		self.other_scopes = []
+		self.function = None
+		self.variables = ScopeVariables(self)
+		self.all_functions = []
 
-		self.params = None
-		self.ret = None
 		self.original_name = self.name
 
 		self.fn_counter = 0
-		self.scope_counter = 0
+		self.call_counter = 0
 		self.functions = scope.functions if scope else [] 
 		self.protos = scope.protos if scope else []
 
@@ -224,6 +262,7 @@ class Scope:
 		self.scopes = OrderedDict() # Child Scopes
 
 		self.in_compilation_scope = self
+
 
 	def add_scope(self, scope):
 		"""
@@ -258,11 +297,7 @@ class Scope:
 			@returns 	the name of the function that is going to be created
 		"""
 
-		self.scope_function.set_body(fnArgument)
-
-	def set_local(self, local_name, local_type, local_value):
-		self.scope_struct.add_variable(ScopeVariable(local_name, local_type, value=local_value))
-		self.scope_function.add_arg(local_name, local_type)
+		self.body = fnArgument
 
 
 	def new_function(self, body, type=ctypes.INT):
@@ -284,65 +319,19 @@ class Scope:
 		for scope in self.scopes.itervalues():
 			scope.compile_functions()
 
-		
-		for scope in self.other_scopes:
+		for functions in self.all_functions:
 			# NOTE: at scope creation, the list from father to children is shared, but not from scope to other_scopes
-			
-			prev_comp_scope = self.in_compilation_scope
-			self.in_compilation_scope = scope
-			self.functions.append(scope.scope_function.create())
-			self.in_compilation_scope = prev_comp_scope
+			self.functions.append(functions.create(self.body))
 			#self.functions.extend(scope.functions)
 
 		return '\n'.join(self.functions)
 
-	def new_parameter(self, parameter_name):
-		self.scope_struct.add_variable(ScopeVariable(parameter_name, ctypes.NONE))
-		self.scope_function.add_arg(parameter_name, ctypes.NONE)
-
-	def new_variable(self, var_name, var_type, var):
-		"""
-			Creates a new variable for this scope (and children) only
-
-			@var_name	the name of the variable to be create
-			@var_type 	(optional) the type of the variable  
-			@var 		(optional) the value of the variable
-		"""
-
-		"""
-		# for local variables, for which the type is not known
-		if not var_type: 
-			print "WTFDAFGWFG"
-			#print var_name, "->",var
-			self.scope_struct.add_variable(ScopeVariable(var_name, ctypes.NONE, value=var))
-			self.scope_function.add_arg(var_name, ctypes.NONE)
-			return 
-		"""
-
-		# for redeclarations of values
-		old = self.scope_struct.get_variable(var_name)
-		if old:
-			#if variable has no type
-			if old.ctype == ctypes.NONE:
-				old.ctype = var_type
-			# If using a different variable type, than declared
-			elif old.ctype != var_type :
-				raise Exception("Can't assign {} to declared variable of type {}"
-					.format(var_type, old.ctype))
-
-		else:
-			self.scope_struct.add_variable(ScopeVariable(var_name, var_type))
-
-		return self.scope_struct.init_var(var_name, value=var)
-			
-	def get_variable(self, name):
-		return self.scope_struct.get_variable(name)
-
+	
 	def compile_variables(self):
-		structs = [self.scope_struct.create()] if self.name == "main" else []
+		structs = [self.variables.create()] if self.name == "main" else []
 
-		for scope in self.other_scopes:
-			structs.append(scope.scope_struct.create())# scope.compile_variables()
+		for function in self.all_functions:
+			structs.append(function.variables.create())# scope.compile_variables()
 
 		for scope in self.scopes.values():
 			structs.append(scope.compile_variables())
@@ -350,83 +339,83 @@ class Scope:
 		return '\n'.join(structs)
 
 
-	def new_type_scope(self, params, ret):
+	def new_parameter(self, name):
 		"""
-			Creates a new scope for specific type parameters / return value combos
+			Add a parameter from a function definition (DefArgument class)
+	
+			@name 	name to call the function parameter
 		"""
+		self.variables.add(ScopeVariable.create(name), parameter=True)
 
-		for scope in self.other_scopes:
-			if scope.ret == ret and  all(a.ctype == b.ctype for a,b in zip(scope.params.values(), params.values())):
-				return scope
+	def new_variable(self, name, this_type, value):
+		"""
+			Creates a new variable for this scope (and children) only
 
-		# create a new scope
-		new_name = "{}_{}".format(self.name, self.scope_counter)
-		self.scope_counter += 1
+			@var_name	the name of the variable to be create
+			@var_type 	 the type of the variable  
+			@var 		 the value of the variable
+		"""
+		# for redeclarations of values
+		old = self.variables.get(name)
+		if old:
+			#if variable has no type, create a new one with type
+			if old.ctype == ctypes.NONE:
+				self.variables[name] = ScopeVariable.create(name, ctype=this_type, value=value)
 
-		new_scope = Scope(name=new_name, scope=self.father)
-		new_scope.in_compilation_scope = self
-		new_scope.call_name = new_name	
+			# If using a different variable type than declared
+			elif old.ctype != this_type :
+				raise Exception("Can't assign {} to declared variable of type {}"
+					.format(this_type, old.ctype))
 
-		new_scope.scope_struct.args = OrderedDict() 
-		# First clean all the names on the new scope
-		for var in self.scope_struct.args.itervalues():
-			new_name = "__{}.{}".format(new_scope.name, var.identifier)
+		else:
+			self.variables.add(ScopeVariable.create(name, ctype=this_type, value=value))
 
-			param = params.get(var.name)
+		return self.init_var(name)
+			
+	def get_variable(self, name):
+		return self.function.get(name) if self.function else self.variables.get(name)
 
-			this_type = param.ctype if param else var.ctype
-			size = len(param.value) - 1 if param else 0
-			new_scope.scope_struct.args[new_name] = ScopeVariable(new_name, this_type, var.value, size=size)
-
-
-		new_scope.scope_function.args = OrderedDict(self.scope_function.args)
-		new_scope.scope_function.set_body(self.scope_function.body)
-		new_scope.protos = self.protos
+	def get_name(self):
+		return self.function.name()
 
 
-		new_scope.ret = ret
-		new_scope.params = params
-		self.other_scopes.append(new_scope)
-		return new_scope
+	def get_call(self, new_vars):
+		for function in self.all_functions:
+			for param in cloned_variables.params:
+				if function.get(param).ctype != new_vars.get(param).ctype:
+					break
+			else:
+				return function
+		return None
+
+
+	def new_call(self, variables):
+		self.function = ScopeFunction(self, variables)
+		self.all_functions.append(self.function)
+
 
 	def call(self, parameters):
 		"""
 			Check parameters for this scope's functions
+			- Gives type to all parameters without type
+			- Gets function return type
+			- Creates a scope for these specific parameters/return combo 
 		"""
+		clone = self.variables.clone()
+		for key, argument  in zip(clone.parameters, parameters):
+			var = ScopeVariable.create(key, ctype=argument.type(), value=argument.compile())
+			clone.add(var)
 
-		local_args = self.scope_function.args.iteritems()
-	
-		fn_types = OrderedDict()
-		for p in parameters:
-			local_name, local_type = local_args.next()
-			# if local has a type, then the type of the parameter must be the same
-			if local_type != ctypes.NONE and local_type != p.type():
-				raise Exception("Expected argument of type '{}' received '{}'".format(local_type, p.type()))
-
-			fn_types[local_name] = ScopeVariable(local_name, p.type(), value=p.compile()) 
-
-
-		
-		# Now all function parameters are confirmed
-
-		# temporarily make types in the functions be the same to the function  (instead of ctypes.NONE)
-		#there is no problem changing them here to whatever the FunctionType tells us to
-
-		## Create a temporary score to perform temporary variable changes for this compilation 
-		tmp_scope_struct = OrderedDict()
-		struct = self.scope_struct.args 
-		for var in fn_types.values():
-			tmp_scope_struct[var.name] = var
-
-
-		self.scope_struct.args = tmp_scope_struct
-
-		ret = self.scope_function.body.type()
-		self.scope_struct.args = struct
-		return self.new_type_scope(fn_types, ret)
+		function = self.get_call(clone)
+		if function:
+			self.function = function
+		else:
+			self.new_call(clone)
+			
+		return self.function.name
 
 	def type(self):
 		if self.ret == None:
 			raise Exception("Function type is unknown, compile it first")
-		return self.ret
+		return self.body.type()
 

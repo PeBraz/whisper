@@ -21,6 +21,7 @@ Code examples can be see inside the `test/` folder, the `test/output/` folder ha
  - [ ] Full malloc use for strings
  - [ ] Add more primitive types 
  - [ ] C bindings 
+ - [ ] Structs
  - [ ] Classes
  - [ ] Add personal error checking to whisper.
  - [ ] Stricter compile checking.

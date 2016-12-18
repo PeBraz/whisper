@@ -1,8 +1,10 @@
 import re
 
-from parser import Parser
-from scope import Scope, ScopeFunction, ScopeStruct, ScopeVariable
-from wptypes import ctypes
+import wp.template
+from wp.parser import Parser
+from scope import Scope
+from wp.types import ctypes
+from wp import template
 
 def argchecker(fn):
     	"""
@@ -12,23 +14,31 @@ def argchecker(fn):
 			- all args have the same type (or some have NONE)
 			- atleast 1 argument has a type (other can have NONE)
 	"""
-	def inner(self):
-		compare_type = None
- 		for arg in self.all_args:
+	def _get_type(args):
+		#Get the return type of the arguments
+		_type = None
+ 		for arg in args:
  			if arg.type() == ctypes.NONE:
  				continue
- 			if compare_type and compare_type != arg.type():
+ 			if _type and _type != arg.type():
  				raise Exception("Comparison between different type variables")
- 			compare_type = arg.type()
+ 			_type = arg.type()
+		return _type
 
- 		if compare_type == ctypes.NONE:
+
+	def inner(self):
+		_type = _get_type(self.all_args)
+ 		if _type == ctypes.NONE:
  			raise Exception("Comparison With Unknown variables")
 
  		for arg in self.all_args:
  			if arg.type() == ctypes.NONE:
- 				scope_variable = self.scope.get_variable(arg.compile()) # argument is stored in the scope 
- 				self.scope.set_local(arg.compile(), compare_type, scope_variable.value) # we need its value
+ 				var = self.scope.get_variable(arg.compile()) # argument is stored in the scope 
+ 				self.scope.add(arg.compile(), _type, var.value) # we need its value
+
  		return fn(self)
+
+	
  	return inner
 
 
@@ -71,10 +81,6 @@ class Argument:
 			calls.append(arg.compile(call=True) if arg.callable else arg.compile())
 
 		main_code = main.format(';\n'.join(calls))	
-		#if self.all_args[0].callable:
-		#	main_code = main.format(self.all_args[0].compile(call=True))
-		#else:
-	#		main_code = main.format(self.all_args[0].compile())
 
 		fns = self.scope.compile_functions()
 
@@ -109,9 +115,6 @@ class Argument:
 			"while": WhileArgument,
 			"def": DefArgument,
 		}
-		# for adding c bindings
-		#if id_str.startswith("c."):
-		#		return lambda s: CFunctionCallArgument(s, scope=self.scope, name=id_str.split(".")[-1])
 		if argument_types.has_key(id_str):
 			return lambda s: argument_types[id_str](s, scope=self.scope)
  
@@ -199,8 +202,7 @@ class VarArgument(Argument):
 		self.callable = False
 
 	def compile(self):
-		scope = self.scope.in_compilation_scope or self.scope 
-		return "__{}.{}".format(scope.name, str(self.arg))
+		return  str(self.arg)
 
 	def execute(self):
 		return self.scope[self.arg]
@@ -209,8 +211,7 @@ class VarArgument(Argument):
 		self.scope[self.arg] = val 
 
 	def type(self):
-		scope = self.scope.in_compilation_scope or self.scope 
-		return scope.get_variable(self.compile()).ctype
+		return self.scope.get_variable(self.compile()).ctype
 
 
 class IntegerArgument(Argument):
@@ -559,12 +560,10 @@ class DefArgument(Argument):
 
 		Argument.__init__(self, *args, **kwargs)
 
-		for var in self.all_args[1]: # function variables, these have ctype.None
-		 	# add the arguments in order, they can only be declared after their types are known
-			#self.scope.new_variable(VarArgument(var, scope=self.scope).compile(), None, None)
-			self.scope.new_parameter(VarArgument(var, scope=self.scope).compile())
+		for var in self.all_args[1]:
+			self.scope.new_parameter(var)#VarArgument(var, scope=self.scope).compile())
+
 		function = self.all_args[2]
-		
 		self.scope.new_scope_function(function)
 
 	
@@ -581,15 +580,13 @@ class FunctionCallArgument(Argument):
 		self.fn_name = kwargs.pop("name")
 
 		Argument.__init__(self, *args, **kwargs)
-	def compile(self):
-		fn_scope = self.scope.get_scope(self.fn_name)
 
-		self.scope = fn_scope.call(self.all_args)
-		return "{}({})\n".format(self.scope.name, ','.join(arg.compile() for arg in self.all_args))
+	def compile(self):
+		fn_name = self.scope.get_scope(self.fn_name).call(self.all_args)
+		return template.functionCall(fn_name, [arg.compile() for arg in self.all_args])
 
 	def type(self):
-		fn_scope = self.scope.get_scope(self.fn_name)
-		scope = fn_scope.call(self.all_args)
+		scope = self.scope.get_scope(self.fn_name).call(self.all_args)
 		return scope.type()
 
 class CFunctionCallArgument(Argument):

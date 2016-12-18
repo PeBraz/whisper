@@ -4,6 +4,9 @@
 ;
 
 
+(def test1 (a) a) 
+(test1 2)
+
 (def print_hello_world () 
     (print "Hello World!")
 )
@@ -74,5 +77,5 @@
 ;(hello_name "Alexandro")
 ;(print (sum_up_to_n 5))
 ;(print (sum_up_to_n_2 5))
-(multiplication_table)
+;(multiplication_table)
 
