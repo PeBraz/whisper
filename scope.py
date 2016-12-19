@@ -235,33 +235,26 @@ class ScopeFunction:
 class Scope:
 
 	def __init__(self, name="main", scope=None):
-		## add this scope to father scope
+
 		self.name = name
 		if scope:
 			scope.add_scope(self)
 
 		self.father = scope
+		self.scopes = OrderedDict() # Child Scopes
 
 		self.fullname = "{}_{}".format(scope.fullname, name) if scope else name
 
-		self.call_name = None
-		self.ctype = ctypes.NONE
-
 		self.function = None
-		self.variables = ScopeVariables(self)
 		self.functions = []
-
-		self.original_name = self.name
-
+		self.variables = ScopeVariables(self)
+		
 		self.fn_counter = 0
-		self.call_counter = 0
-		self.helpers = []#scope.helpers if scope else [] 
-		self.protos = []#scope.protos if scope else []
-
+		self.helpers = []
+		self.protos = []
+		
 		self.fn_name_template = "__fn_{scope}_{id}"
 		self.fn_template = "{type} {name}(){{{body};}}"
-
-		self.scopes = OrderedDict() # Child Scopes
 
 
 	def add_scope(self, scope):
