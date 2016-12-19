@@ -82,9 +82,9 @@ class Argument:
 
 		main_code = main.format(';\n'.join(calls))	
 
-		fns = self.scope.compile_functions()
+		fns = '\n'.join(self.scope.compile_functions())
 
-		main_code = main_code.format('\n'.join(self.scope.protos),
+		main_code = main_code.format('\n'.join(self.scope.compile_protos()),
 										self.scope.compile_variables(),
 										fns)
 		return main_code
@@ -202,16 +202,13 @@ class VarArgument(Argument):
 		self.callable = False
 
 	def compile(self):
-		return  str(self.arg)
-
-	def execute(self):
-		return self.scope[self.arg]
+		return  self.scope.compile(self.arg)
 
 	def set(self, val):
 		self.scope[self.arg] = val 
 
 	def type(self):
-		return self.scope.get_variable(self.compile()).ctype
+		return self.scope.get_variable(self.arg).ctype
 
 
 class IntegerArgument(Argument):
@@ -261,7 +258,7 @@ class SeqArgument(Argument):
 		if  self.all_args[-1].type() != ctypes.VOID:
 			seq_calls[-1] = "return {}".format(seq_calls[-1])
 
-		fn_call = self.scope.new_function('\n'.join(seq_calls), type=self.type())
+		fn_call = self.scope.helper('\n'.join(seq_calls), type=self.type())
 		return "{}()".format(fn_call) if call else fn_call 
 
 
@@ -351,11 +348,6 @@ class PrintArgument(Argument):
 	def __init__(self, *args, **kwargs):
 		Argument.__init__(self, *args, **kwargs);
 		self.callable = True
-	def execute(self):
-		args = [str(arg.execute()) for arg in self.all_args]
-		print ' '.join(args)
-		return args[-1]
-
 	def compile(self, call=False):
 
 		type_formatters = []
@@ -363,18 +355,15 @@ class PrintArgument(Argument):
 		print_args = [arg.compile() for arg in self.all_args]
 
 		for arg in self.all_args:
-
 			if arg.type() == ctypes.STRING:
 				type_formatters.append("%s")
 			else:
 				type_formatters.append("%d")
 
-
-
 		prints = "printf(\"{}\\n\",{});".format(" ".join(type_formatters),\
 		  ", ".join(print_args))
 
-		fn_call = self.scope.new_function(prints)
+		fn_call = self.scope.helper(prints)
 		return "{}()".format(fn_call) if call else fn_call 
 
 	def type(self):
@@ -586,7 +575,8 @@ class FunctionCallArgument(Argument):
 		return template.functionCall(fn_name, [arg.compile() for arg in self.all_args])
 
 	def type(self):
-		scope = self.scope.get_scope(self.fn_name).call(self.all_args)
+		scope = self.scope.get_scope(self.fn_name)
+		#scope.call(self.all_args)
 		return scope.type()
 
 class CFunctionCallArgument(Argument):

@@ -37,10 +37,10 @@ class NoneVariable(ScopeVariable):
 		self.name = name
 		self.ctype = ctypes.NONE
 
-	def init(self):
-		raise Exception("Tried to initialize a value with no type")
+	def init(self, scope_name):
+		raise Exception("Tried to initialize value '{}' with no type".format(self.name))
 	def declare(self):
-		raise Exception("Tried to declare a value with no type")
+		raise Exception("Tried to declare value '{}' with no type".format(self.name))
 	def clone(self):
 		return NoneVariable(self.name)
 
@@ -53,7 +53,7 @@ class PrimitiveVariable(ScopeVariable):
 		self.ctype = ctype
 
 	def init(self, scope_name):
-		return  "{}.{} = {};".format(scope_name, self.name, self.value)
+		return  "__{}.{} = {};".format(scope_name, self.name, self.value)
 
 	def declare(self):
 		return "{} {};".format(self.ctype, self.name);
@@ -132,7 +132,7 @@ class ScopeVariables:
 		return self.args.get(var_name)
 		
 
-	def init(self, var_name, value=None):
+	def init(self, var_name):
 		"""
 			Returns the C value assignement string for the variable with the name given,
 			using its default value initialization (ex: 0 for int) or using the 'value' 
@@ -149,8 +149,6 @@ class ScopeVariables:
 			raise Exception("Variable '{}' not in scope '{}'".format(var_name, self.name))
 
 		var = self.args[var_name]
-		if value:
-			var.value = value
 
 		return var.init(self.scope.name)
 
@@ -193,13 +191,14 @@ class ScopeFunction:
 		- ...
 	"""
 
-
 	def __init__(self, scope, variables):
 		self.variables = variables
 
 		self.name = scope.name
 		self.scope = scope
-
+		#self.ret = None
+		self.body = scope.body
+		self.ret = None
 		# add myself to the scope
 		self.this_counter = scope.call_counter
 		self.scope.call_counter += 1
@@ -209,26 +208,29 @@ class ScopeFunction:
 
 	def get(self, var_name):
 		return self.variables.get(var_name)
-
-	def create(self, body):
-		if not body:
-			raise Exception("The scope '{}' has no body!!".format(self.name))
+	
+	def create(self):
+		compilation = self.body.compile(call=True) if self.body.callable else self.body.compile()
+		self.ret = self.body.type()
 
 		fn_template = "{} {} ({}) {{{};}}"
 
-		compiled = body.compile(call=True) if body.callable else body.compile()
-		ret = body.type()
-
 		args = ["{} {}".format(var.ctype, var.name) for var in self.variables.get_params()]
 		fnbody = "{}\n{} {}".format(self.variables.init_all(),\
-			"return" if ret != ctypes.VOID else "",\
-			compiled)
+			"return" if self.ret != ctypes.VOID else "",\
+			compilation)
 
-		self.scope.protos.append("{} {} ({});".format(ret, self.name,','.join(args)))
+		self.scope.protos.append("{} {} ({});".format(self.ret, self.name,','.join(args)))
 		
-		return fn_template.format(ret, self.name, ','.join(args), fnbody)
+		return fn_template.format(self.ret, self.name, ','.join(args), fnbody)
 
-
+	def type(self, body):
+		#self.scope.function = self
+		if self.ret:
+			return self.ret
+		 
+		self.ret = body.type()
+		return self.ret 
 
 class Scope:
 
@@ -247,21 +249,19 @@ class Scope:
 
 		self.function = None
 		self.variables = ScopeVariables(self)
-		self.all_functions = []
+		self.functions = []
 
 		self.original_name = self.name
 
 		self.fn_counter = 0
 		self.call_counter = 0
-		self.functions = scope.functions if scope else [] 
-		self.protos = scope.protos if scope else []
+		self.helpers = []#scope.helpers if scope else [] 
+		self.protos = []#scope.protos if scope else []
 
 		self.fn_name_template = "__fn_{scope}_{id}"
 		self.fn_template = "{type} {name}(){{{body};}}"
 
 		self.scopes = OrderedDict() # Child Scopes
-
-		self.in_compilation_scope = self
 
 
 	def add_scope(self, scope):
@@ -272,12 +272,6 @@ class Scope:
 		"""
 		self.scopes[scope.name] = scope
 
-	def set_call(self, fn_name):
-		"""
-			set_call - the function name given, directs to the function the scope uses directly 
-			@arg fn_name 	name of the function of this scope
-		"""
-		self.call_name = fn_name
 
 	def get_scope(self, name):
 		scope = self
@@ -299,8 +293,13 @@ class Scope:
 
 		self.body = fnArgument
 
+	def compile_protos(self):
+		protos = []
+		for scope in self.scopes.values():
+			protos += scope.compile_protos()
+		return self.protos + protos
 
-	def new_function(self, body, type=ctypes.INT):
+	def helper(self, body, type=ctypes.INT):
 		"""
 			new_function - Creates a placeholder function, this function receives no arguments,
 			@arg body   body of this function
@@ -312,25 +311,29 @@ class Scope:
 		self.protos.append("{} {}();".format(type, name))
 		self.fn_counter += 1;
 		template = self.fn_template.format(type=type, name=name,body=body)
-		self.functions.append(template)
+		self.helpers.append(template)
 		return name
 
+	def compile(self, var):
+		return "__{}.{}".format(self.name, var)
+
 	def compile_functions(self):
-		for scope in self.scopes.itervalues():
-			scope.compile_functions()
+		definitions = []
 
-		for functions in self.all_functions:
+		for functions in self.functions:
 			# NOTE: at scope creation, the list from father to children is shared, but not from scope to other_scopes
-			self.functions.append(functions.create(self.body))
-			#self.functions.extend(scope.functions)
+			definitions.append(functions.create())
 
-		return '\n'.join(self.functions)
+		for scope in self.scopes.itervalues():
+			definitions.extend(scope.compile_functions())	
 
-	
+		return self.helpers + definitions
+
+
 	def compile_variables(self):
 		structs = [self.variables.create()] if self.name == "main" else []
 
-		for function in self.all_functions:
+		for function in self.functions:
 			structs.append(function.variables.create())# scope.compile_variables()
 
 		for scope in self.scopes.values():
@@ -380,8 +383,8 @@ class Scope:
 
 
 	def get_call(self, new_vars):
-		for function in self.all_functions:
-			for param in cloned_variables.params:
+		for function in self.functions:
+			for param in new_vars.parameters:
 				if function.get(param).ctype != new_vars.get(param).ctype:
 					break
 			else:
@@ -391,7 +394,7 @@ class Scope:
 
 	def new_call(self, variables):
 		self.function = ScopeFunction(self, variables)
-		self.all_functions.append(self.function)
+		self.functions.append(self.function)
 
 
 	def call(self, parameters):
@@ -400,10 +403,12 @@ class Scope:
 			- Gives type to all parameters without type
 			- Gets function return type
 			- Creates a scope for these specific parameters/return combo 
-		"""
+		"""	
 		clone = self.variables.clone()
+
 		for key, argument  in zip(clone.parameters, parameters):
-			var = ScopeVariable.create(key, ctype=argument.type(), value=argument.compile())
+			arg_type = argument.type()
+			var = ScopeVariable.create(key, ctype=arg_type, value=key) # the value is the variable name (because it is a local parameter)
 			clone.add(var)
 
 		function = self.get_call(clone)
@@ -415,7 +420,5 @@ class Scope:
 		return self.function.name
 
 	def type(self):
-		if self.ret == None:
-			raise Exception("Function type is unknown, compile it first")
-		return self.body.type()
+		return self.function.type(self.body)
 

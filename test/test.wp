@@ -3,9 +3,21 @@
 ;      https://adriann.github.io/programming_problems.html
 ;
 
+; Test local parameters with mutable type 
 
 (def test1 (a) a) 
 (test1 2)
+
+; Test block scopes with multiple types
+(def test2 (a) 
+    (seq
+        (def _test2 (a) 
+            (print a)
+        )
+        (_test2 a)
+    )
+)
+(test2 4)
 
 (def print_hello_world () 
     (print "Hello World!")
